@@ -1,18 +1,32 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Medicine } from '../types';
+import { Medicine, Frequency } from '../types';
 
 const KEY = 'medicines';
 const LINK_CODE_KEY = 'myLinkCode';
 const GUARDIAN_LINK_KEY = 'guardianLink';
 
+const today = new Date().toISOString();
+
+const DEFAULTS: Medicine[] = [
+  { id: '1', name: 'Metformin',  dosageMg: 500,  frequency: Frequency.ONCE_DAILY, reminderTime: '08:00', pillColor: '#1D9E75', startDate: today },
+  { id: '2', name: 'Lisinopril', dosageMg: 10,   frequency: Frequency.ONCE_DAILY, reminderTime: '09:00', pillColor: '#378ADD', startDate: today },
+  { id: '3', name: 'Vitamin D',  dosageMg: 1000, frequency: Frequency.ONCE_DAILY, reminderTime: '08:00', pillColor: '#F59E0B', startDate: today },
+];
+
 export async function getMedicines(): Promise<Medicine[]> {
   const raw = await AsyncStorage.getItem(KEY);
-  return raw ? JSON.parse(raw) : [];
+  if (!raw) return DEFAULTS;
+  const parsed: Medicine[] = JSON.parse(raw);
+  return parsed.length > 0 ? parsed : DEFAULTS;
 }
 
-export async function saveMedicine(medicine: Medicine): Promise<void> {
+export async function saveMedicine(medicine: Omit<Medicine, 'id'>): Promise<void> {
   const medicines = await getMedicines();
-  medicines.push(medicine);
+  const newMedicine: Medicine = {
+    ...medicine,
+    id: Math.random().toString(36).substring(2, 11),
+  };
+  medicines.push(newMedicine);
   await AsyncStorage.setItem(KEY, JSON.stringify(medicines));
 }
 
