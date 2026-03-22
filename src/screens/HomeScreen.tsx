@@ -5,6 +5,7 @@ import { Medicine, DoseLog, Frequency } from '../types';
 import MedicineCard from '../components/MedicineCard';
 import StreakBadge from '../components/StreakBadge';
 import { getTodaysDoseLogs, saveDoseLog, calculateStreak } from '../storage/doseLogs';
+import { getLinkCode } from '../storage/medicines';
 
 const TEST_MEDICINES: Medicine[] = [
   {
@@ -57,9 +58,11 @@ export default function HomeScreen() {
     count: 0,
     type: 'none',
   });
+  const [linkCode, setLinkCode] = useState<string>('');
 
   useEffect(() => {
     getTodaysDoseLogs().then(setDoseLogs);
+    getLinkCode().then(setLinkCode);
   }, []);
 
   async function refreshStreak() {
@@ -68,17 +71,13 @@ export default function HomeScreen() {
   }
 
   function onTaken(medicine: Medicine) {
-    // Optimistic UI update
     const newLog: DoseLog = {
       id: Math.random().toString(36).substring(2, 11),
       medicineId: medicine.id,
       takenAt: new Date().toISOString(),
       status: 'taken',
     };
-    const updatedLogs = [...doseLogs, newLog];
-    setDoseLogs(updatedLogs);
-
-    // Persist and recalculate in background
+    setDoseLogs(prev => [...prev, newLog]);
     saveDoseLog(medicine.id, medicine.name, 'taken');
     refreshStreak();
   }
@@ -105,6 +104,15 @@ export default function HomeScreen() {
             <StreakBadge count={streak.count} type={streak.type} />
             <Text style={styles.sectionTitle}>Today's Medicines</Text>
           </View>
+        }
+        ListFooterComponent={
+          linkCode ? (
+            <View style={styles.guardianCard}>
+              <Text style={styles.guardianTitle}>Guardian Access</Text>
+              <Text style={styles.linkCode}>{linkCode}</Text>
+              <Text style={styles.guardianSubtitle}>Share this code with your family abroad</Text>
+            </View>
+          ) : null
         }
         contentContainerStyle={styles.list}
       />
@@ -145,5 +153,33 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#111827',
     marginBottom: 12,
+  },
+  guardianCard: {
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    padding: 20,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  guardianTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 12,
+  },
+  linkCode: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    color: '#1D9E75',
+    fontFamily: 'monospace',
+    letterSpacing: 6,
+    marginBottom: 8,
+  },
+  guardianSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
   },
 });

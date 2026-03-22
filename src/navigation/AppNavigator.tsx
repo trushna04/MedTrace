@@ -13,11 +13,11 @@ export default function AppNavigator() {
     <NavigationContainer>
       <Tab.Navigator
         screenOptions={({ route }) => ({
-          tabBarIcon: ({ color, size }) => {
+          tabBarIcon: ({ color, size, focused }) => {
             let iconName: keyof typeof Ionicons.glyphMap;
-            if (route.name === 'Home') iconName = 'home';
-            else if (route.name === 'Add Medicine') iconName = 'add-circle';
-            else iconName = 'heart';
+            if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
+            else if (route.name === 'Add Medicine') iconName = focused ? 'add-circle' : 'add-circle-outline';
+            else iconName = focused ? 'heart' : 'heart-outline';
             return <Ionicons name={iconName} size={size} color={color} />;
           },
           tabBarActiveTintColor: '#1D9E75',
