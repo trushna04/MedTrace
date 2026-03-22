@@ -2,16 +2,21 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
 interface Props {
-  streak?: number;
+  count: number;
+  type: 'gold' | 'silver' | 'none';
 }
 
-export default function StreakBadge({ streak = 0 }: Props) {
+export default function StreakBadge({ count, type }: Props) {
   return (
     <View style={styles.container}>
-      {streak > 0 ? (
-        <Text style={styles.active}>🔥 {streak} day streak</Text>
-      ) : (
-        <Text style={styles.inactive}>✨ Start your streak today</Text>
+      {type === 'gold' && (
+        <Text style={styles.gold}>🔥 {count} day streak</Text>
+      )}
+      {type === 'silver' && (
+        <Text style={styles.silver}>✓ {count} day streak</Text>
+      )}
+      {type === 'none' && (
+        <Text style={styles.none}>Start your streak today</Text>
       )}
     </View>
   );
@@ -23,12 +28,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 24,
   },
-  active: {
+  gold: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: 'bold',
     color: '#F59E0B',
   },
-  inactive: {
+  silver: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  none: {
     fontSize: 15,
     color: '#9CA3AF',
   },

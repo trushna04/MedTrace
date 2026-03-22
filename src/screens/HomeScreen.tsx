@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Medicine, Frequency } from '../types';
+import { Medicine, DoseLog, Frequency } from '../types';
 import MedicineCard from '../components/MedicineCard';
 import StreakBadge from '../components/StreakBadge';
+import { getTodaysDoseLogs, saveDoseLog, calculateStreak } from '../storage/doseLogs';
 
 const TEST_MEDICINES: Medicine[] = [
   {
@@ -51,12 +52,49 @@ function formatDate(): string {
 }
 
 export default function HomeScreen() {
+  const [doseLogs, setDoseLogs] = useState<DoseLog[]>([]);
+  const [streak, setStreak] = useState<{ count: number; type: 'gold' | 'silver' | 'none' }>({
+    count: 0,
+    type: 'none',
+  });
+
+  useEffect(() => {
+    getTodaysDoseLogs().then(setDoseLogs);
+  }, []);
+
+  async function refreshStreak() {
+    const result = await calculateStreak(TEST_MEDICINES.length);
+    setStreak(result);
+  }
+
+  function onTaken(medicine: Medicine) {
+    // Optimistic UI update
+    const newLog: DoseLog = {
+      id: Math.random().toString(36).substring(2, 11),
+      medicineId: medicine.id,
+      takenAt: new Date().toISOString(),
+      status: 'taken',
+    };
+    const updatedLogs = [...doseLogs, newLog];
+    setDoseLogs(updatedLogs);
+
+    // Persist and recalculate in background
+    saveDoseLog(medicine.id, medicine.name, 'taken');
+    refreshStreak();
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
         data={TEST_MEDICINES}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <MedicineCard medicine={item} />}
+        renderItem={({ item }) => (
+          <MedicineCard
+            medicine={item}
+            isTaken={doseLogs.some(l => l.medicineId === item.id && l.status === 'taken')}
+            onTaken={() => onTaken(item)}
+          />
+        )}
         ListHeaderComponent={
           <View>
             <View style={styles.header}>
@@ -64,7 +102,7 @@ export default function HomeScreen() {
               <Text style={styles.name}>Trushna</Text>
               <Text style={styles.date}>{formatDate()}</Text>
             </View>
-            <StreakBadge streak={0} />
+            <StreakBadge count={streak.count} type={streak.type} />
             <Text style={styles.sectionTitle}>Today's Medicines</Text>
           </View>
         }
