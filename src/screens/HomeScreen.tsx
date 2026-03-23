@@ -7,6 +7,8 @@ import MedicineCard from '../components/MedicineCard';
 import StreakBadge from '../components/StreakBadge';
 import { getTodaysDoseLogs, saveDoseLog, calculateStreak } from '../storage/doseLogs';
 import { getLinkCode, getMedicines } from '../storage/medicines';
+import { supabase } from '../lib/supabase';
+import { syncMedicines } from '../lib/database';
 
 function getGreeting(): string {
   const hour = new Date().getHours();
@@ -34,30 +36,65 @@ export default function HomeScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
-      getMedicines().then(setMedicines);
-      getTodaysDoseLogs().then(logs => {
-        setDoseLogs(logs);
+      getMedicines().then(meds => {
+        setMedicines(meds);
+        // Background sync to Supabase
+        supabase.auth.getUser().then(({ data }) => {
+          if (data.user) syncMedicines(data.user.id, meds);
+        });
       });
+      getTodaysDoseLogs().then(setDoseLogs);
       getLinkCode().then(setLinkCode);
     }, [])
   );
 
-  async function refreshStreak(medicineCount: number) {
-    const result = await calculateStreak(medicineCount);
-    setStreak(result);
-  }
+  async function onTaken(medicine: Medicine) {
+    try {
+      const logId = Math.random().toString(36).substring(2, 11);
+      const takenAt = new Date().toISOString();
+      const date = takenAt.split('T')[0];
 
-  function onTaken(medicine: Medicine) {
-    const newLog: DoseLog = {
-      id: Math.random().toString(36).substring(2, 11),
-      medicineId: medicine.id,
-      takenAt: new Date().toISOString(),
-      status: 'taken',
-    };
-    const updated = [...doseLogs, newLog];
-    setDoseLogs(updated);
-    saveDoseLog(medicine.id, medicine.name, 'taken');
-    refreshStreak(medicines.length);
+      // Step 1: Optimistic UI update
+      const newLog: DoseLog = {
+        id: logId,
+        medicineId: medicine.id,
+        takenAt,
+        status: 'taken',
+      };
+      setDoseLogs(prev => [...prev, newLog]);
+
+      // Save to AsyncStorage
+      await saveDoseLog(medicine.id, medicine.name, 'taken');
+
+      // Recalculate streak
+      const allMeds = await getMedicines();
+      const newStreak = await calculateStreak(allMeds.length);
+      setStreak(newStreak);
+
+      // Step 2: Sync to Supabase
+      const { data: { user } } = await supabase.auth.getUser();
+      console.log('Saving dose log for:', medicine.name);
+      console.log('User:', user?.id);
+
+      if (user) {
+        const { error } = await supabase.from('dose_logs').insert({
+          id: logId,
+          user_id: user.id,
+          medicine_id: medicine.id,
+          medicine_name: medicine.name,
+          status: 'taken',
+          taken_at: takenAt,
+          date,
+        });
+        console.log('Supabase insert result:', error);
+        if (error) console.error('Supabase sync error:', error.message);
+        else console.log('Synced to Supabase successfully');
+      } else {
+        console.log('No user found - not syncing to Supabase');
+      }
+    } catch (err) {
+      console.error('onTaken error:', err);
+    }
   }
 
   return (

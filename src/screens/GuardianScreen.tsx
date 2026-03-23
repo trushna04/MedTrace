@@ -9,13 +9,10 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getTodaysDoseLogs } from '../storage/doseLogs';
-import {
-  clearGuardianLink,
-  getGuardianLink,
-  saveGuardianLink,
-} from '../storage/medicines';
-import { DoseLog } from '../types';
+import { supabase } from '../lib/supabase';
+import { getPatientData } from '../lib/database';
+import { clearGuardianLink, getGuardianLink, saveGuardianLink } from '../storage/medicines';
+import { Medicine, DoseLog } from '../types';
 
 type StatusType = 'green' | 'amber' | 'red' | 'gray';
 
@@ -28,16 +25,15 @@ interface StatusConfig {
 const STATUS: Record<StatusType, StatusConfig> = {
   green: { color: '#1D9E75', symbol: '✓', label: 'All medicines taken today 🎉' },
   amber: { color: '#F59E0B', symbol: '!', label: 'Some medicines missed' },
-  red:   { color: '#EF4444', symbol: '✗', label: 'No medicines taken today ⚠️' },
-  gray:  { color: '#9CA3AF', symbol: '?', label: 'Waiting for data...' },
+  red:   { color: '#E74C3C', symbol: '✗', label: 'No medicines taken today ⚠️' },
+  gray:  { color: '#9E9E9E', symbol: '?', label: 'Waiting for data...' },
 };
 
-const TOTAL_MEDICINES = 3;
-
-function computeStatus(logs: DoseLog[]): StatusType {
+function computeStatus(medicines: Medicine[], logs: DoseLog[]): StatusType {
+  if (medicines.length === 0) return 'gray';
   const taken = logs.filter(l => l.status === 'taken').length;
   if (taken === 0) return logs.length === 0 ? 'gray' : 'red';
-  if (taken >= TOTAL_MEDICINES) return 'green';
+  if (taken >= medicines.length) return 'green';
   return 'amber';
 }
 
@@ -54,25 +50,27 @@ export default function GuardianScreen() {
   const [guardianLink, setGuardianLink] = useState<{ code: string; patientName: string } | null>(null);
   const [codeInput, setCodeInput] = useState('');
   const [nameInput, setNameInput] = useState('');
+  const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [logs, setLogs] = useState<DoseLog[]>([]);
   const [status, setStatus] = useState<StatusType>('gray');
   const [lastUpdated, setLastUpdated] = useState('—');
 
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const prevStatus = useRef<StatusType>('gray');
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   useEffect(() => {
     getGuardianLink().then(link => {
       setGuardianLink(link);
-      if (link) loadDashboard();
+      if (link) refreshData();
     });
+    return () => { channelRef.current?.unsubscribe(); };
   }, []);
 
-  async function loadDashboard() {
-    const todayLogs = await getTodaysDoseLogs();
+  function applyLogs(meds: Medicine[], todayLogs: DoseLog[]) {
     setLogs(todayLogs);
-    const s = computeStatus(todayLogs);
     setLastUpdated(formatTimestamp(todayLogs));
+    const s = computeStatus(meds, todayLogs);
     if (s !== prevStatus.current) {
       Animated.sequence([
         Animated.timing(scaleAnim, { toValue: 1.08, duration: 150, useNativeDriver: true }),
@@ -83,6 +81,94 @@ export default function GuardianScreen() {
     setStatus(s);
   }
 
+  async function loadDashboard(code: string) {
+    const data = await getPatientData(code);
+    if (!data) return;
+    setMedicines(data.medicines);
+    applyLogs(data.medicines, data.doseLogs);
+  }
+
+  async function refreshData() {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+
+      // Get current user
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        console.log('No user logged in');
+        return;
+      }
+
+      // Fetch today's dose logs for current user only
+      const { data: rawLogs, error } = await supabase
+        .from('dose_logs')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('date', today);
+
+      console.log('Raw logs from Supabase:', rawLogs, 'Error:', error);
+
+      if (error) {
+        console.error('Refresh error:', error.message);
+        return;
+      }
+
+      const todayLogs: DoseLog[] = (rawLogs || []).map((l: any) => ({
+        id: l.id,
+        medicineId: l.medicine_id,
+        takenAt: l.taken_at,
+        status: l.status,
+      }));
+
+      // Get medicines from AsyncStorage
+      const { getMedicines } = await import('../storage/medicines');
+      const allMeds = await getMedicines();
+
+      console.log('Medicines count:', allMeds.length);
+      console.log('Today logs count:', todayLogs.length);
+
+      setMedicines(allMeds);
+      setLogs(todayLogs);
+      setLastUpdated(new Date().toLocaleTimeString());
+
+      // Calculate status
+      const taken = todayLogs.filter(l => l.status === 'taken');
+      const uniqueTaken = new Set(taken.map(l => l.medicineId)).size;
+      const totalMeds = allMeds.length;
+
+      console.log('Unique taken:', uniqueTaken, 'Total meds:', totalMeds);
+
+      if (uniqueTaken === 0) {
+        setStatus(todayLogs.length === 0 ? 'gray' : 'red');
+      } else if (uniqueTaken >= totalMeds) {
+        setStatus('green');
+      } else {
+        setStatus('amber');
+      }
+
+      // Pulse animation
+      Animated.sequence([
+        Animated.timing(scaleAnim, { toValue: 1.08, duration: 150, useNativeDriver: true }),
+        Animated.timing(scaleAnim, { toValue: 1, duration: 150, useNativeDriver: true }),
+      ]).start();
+
+    } catch (err) {
+      console.error('refreshData error:', err);
+    }
+  }
+
+  function subscribeRealtime(code: string) {
+    channelRef.current?.unsubscribe();
+    channelRef.current = supabase
+      .channel(`dose_logs_${code}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'dose_logs' },
+        () => loadDashboard(code)
+      )
+      .subscribe();
+  }
+
   async function handleConnect() {
     const code = codeInput.trim().toUpperCase();
     const name = nameInput.trim() || 'Family Member';
@@ -90,12 +176,15 @@ export default function GuardianScreen() {
     await saveGuardianLink(code, name);
     const link = { code, patientName: name };
     setGuardianLink(link);
-    loadDashboard();
+    loadDashboard(code);
+    subscribeRealtime(code);
   }
 
   async function handleDisconnect() {
+    channelRef.current?.unsubscribe();
     await clearGuardianLink();
     setGuardianLink(null);
+    setMedicines([]);
     setLogs([]);
     setStatus('gray');
     setCodeInput('');
@@ -154,16 +243,14 @@ export default function GuardianScreen() {
         <Text style={[styles.statusLabel, { color: cfg.color }]}>{cfg.label}</Text>
 
         <View style={styles.medicineList}>
-          {(['Metformin 500mg', 'Lisinopril 10mg', 'Vitamin D 1000IU'] as const).map((name, i) => {
-            const taken = logs.some(
-              l => l.medicineId === String(i + 1) && l.status === 'taken'
-            );
+          {medicines.map(med => {
+            const taken = logs.some(l => l.medicineId === med.id && l.status === 'taken');
             return (
-              <View key={name} style={styles.medicineRow}>
+              <View key={med.id} style={styles.medicineRow}>
                 <Text style={[styles.medicineCheck, taken ? styles.takenGreen : styles.notTakenGray]}>
                   {taken ? '✓' : '○'}
                 </Text>
-                <Text style={styles.medicineName}>{name}</Text>
+                <Text style={styles.medicineName}>{med.name} {med.dosageMg}mg</Text>
                 <Text style={[styles.medicineStatus, taken ? styles.takenGreen : styles.notTakenGray]}>
                   {taken ? 'Taken' : 'Not yet'}
                 </Text>
@@ -174,7 +261,7 @@ export default function GuardianScreen() {
 
         <Text style={styles.lastUpdated}>Last updated: {lastUpdated}</Text>
 
-        <TouchableOpacity style={styles.refreshButton} onPress={loadDashboard} activeOpacity={0.8}>
+        <TouchableOpacity style={styles.refreshButton} onPress={() => refreshData()} activeOpacity={0.8}>
           <Text style={styles.refreshButtonText}>Refresh</Text>
         </TouchableOpacity>
 

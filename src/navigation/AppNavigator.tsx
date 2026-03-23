@@ -1,5 +1,4 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import HomeScreen from '../screens/HomeScreen';
@@ -10,7 +9,6 @@ const Tab = createBottomTabNavigator();
 
 export default function AppNavigator() {
   return (
-    <NavigationContainer>
       <Tab.Navigator
         screenOptions={({ route }) => ({
           tabBarIcon: ({ color, size, focused }) => {
@@ -29,6 +27,5 @@ export default function AppNavigator() {
         <Tab.Screen name="Add Medicine" component={AddMedicineScreen} />
         <Tab.Screen name="Guardian" component={GuardianScreen} />
       </Tab.Navigator>
-    </NavigationContainer>
   );
 }
