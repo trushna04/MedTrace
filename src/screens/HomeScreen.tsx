@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
-import { View, Text, FlatList, StyleSheet } from 'react-native';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect } from '@react-navigation/native';
-import { Medicine, DoseLog } from '../types';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { Medicine, DoseLog, Appointment } from '../types';
 import MedicineCard from '../components/MedicineCard';
 import StreakBadge from '../components/StreakBadge';
 import { getTodaysDoseLogs, saveDoseLog, calculateStreak } from '../storage/doseLogs';
-import { getLinkCode, getMedicines } from '../storage/medicines';
+import { getMedicines } from '../storage/medicines';
+import { getUpcomingAppointments } from '../storage/appointments';
 import { supabase } from '../lib/supabase';
 import { syncMedicines } from '../lib/database';
 
@@ -26,25 +27,25 @@ function formatDate(): string {
 }
 
 export default function HomeScreen() {
+  const navigation = useNavigation<any>();
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [doseLogs, setDoseLogs] = useState<DoseLog[]>([]);
   const [streak, setStreak] = useState<{ count: number; type: 'gold' | 'silver' | 'none' }>({
     count: 0,
     type: 'none',
   });
-  const [linkCode, setLinkCode] = useState<string>('');
+  const [nextAppointment, setNextAppointment] = useState<Appointment | null>(null);
 
   useFocusEffect(
     React.useCallback(() => {
       getMedicines().then(meds => {
         setMedicines(meds);
-        // Background sync to Supabase
         supabase.auth.getUser().then(({ data }) => {
           if (data.user) syncMedicines(data.user.id, meds);
         });
       });
       getTodaysDoseLogs().then(setDoseLogs);
-      getLinkCode().then(setLinkCode);
+      getUpcomingAppointments().then(appts => setNextAppointment(appts[0] ?? null));
     }, [])
   );
 
@@ -116,19 +117,24 @@ export default function HomeScreen() {
               <Text style={styles.name}>Trushna</Text>
               <Text style={styles.date}>{formatDate()}</Text>
             </View>
+            {nextAppointment ? (
+              <TouchableOpacity
+                style={styles.apptBanner}
+                onPress={() => navigation.navigate('Schedule')}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.apptBannerText}>
+                  {'📅 Next: '}
+                  <Text style={styles.apptBannerBold}>{nextAppointment.doctorName}</Text>
+                  {nextAppointment.time ? ` · ${nextAppointment.date} · ${nextAppointment.time}` : ` · ${nextAppointment.date}`}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <StreakBadge count={streak.count} type={streak.type} />
             <Text style={styles.sectionTitle}>Today's Medicines</Text>
           </View>
         }
-        ListFooterComponent={
-          linkCode ? (
-            <View style={styles.guardianCard}>
-              <Text style={styles.guardianTitle}>Guardian Access</Text>
-              <Text style={styles.linkCode}>{linkCode}</Text>
-              <Text style={styles.guardianSubtitle}>Share this code with your family abroad</Text>
-            </View>
-          ) : null
-        }
+
         contentContainerStyle={styles.list}
       />
     </SafeAreaView>
@@ -143,28 +149,14 @@ const styles = StyleSheet.create({
   name: { fontSize: 28, fontWeight: 'bold', color: '#111827', marginBottom: 4 },
   date: { fontSize: 14, color: '#6B7280' },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#111827', marginBottom: 12 },
-  guardianCard: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 12,
-    padding: 20,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  guardianTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+  apptBanner: {
+    backgroundColor: '#ECFEFF',
+    borderRadius: 10,
+    padding: 12,
     marginBottom: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#0891B2',
   },
-  linkCode: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#1D9E75',
-    fontFamily: 'monospace',
-    letterSpacing: 6,
-    marginBottom: 8,
-  },
-  guardianSubtitle: { fontSize: 13, color: '#6B7280', textAlign: 'center' },
+  apptBannerText: { fontSize: 14, color: '#0E7490' },
+  apptBannerBold: { fontWeight: '700' },
 });

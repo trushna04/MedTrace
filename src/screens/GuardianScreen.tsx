@@ -16,6 +16,49 @@ import { Medicine, DoseLog } from '../types';
 
 type StatusType = 'green' | 'amber' | 'red' | 'gray';
 
+function getVitalIcon(type: string): string {
+  const icons: Record<string, string> = {
+    blood_pressure: '🫀', glucose: '🩸', weight: '⚖️',
+    spo2: '🫁', heart_rate: '💓', temperature: '🌡️',
+  };
+  return icons[type] ?? '📊';
+}
+
+function getVitalLabel(type: string): string {
+  const labels: Record<string, string> = {
+    blood_pressure: 'Blood Pressure', glucose: 'Glucose',
+    weight: 'Weight', spo2: 'SpO2', heart_rate: 'Heart Rate', temperature: 'Temp',
+  };
+  return labels[type] ?? type;
+}
+
+function getVitalColor(v: any): string {
+  const val = parseFloat(v.value);
+  switch (v.type) {
+    case 'glucose':       return val < 70 || val > 140 ? '#E74C3C' : '#1D9E75';
+    case 'spo2':          return val < 95 ? '#E74C3C' : '#1D9E75';
+    case 'heart_rate':    return val < 60 || val > 100 ? '#E74C3C' : '#1D9E75';
+    case 'temperature':   return val < 36 || val > 37.5 ? '#E74C3C' : '#1D9E75';
+    case 'weight':        return '#1D9E75';
+    case 'blood_pressure': {
+      const parts = v.value.split('/').map(Number);
+      if (parts.length === 2 && (parts[0] > 140 || parts[1] > 90)) return '#E74C3C';
+      return '#1D9E75';
+    }
+    default: return '#1D9E75';
+  }
+}
+
+function timeAgo(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime();
+  const hours = Math.floor(diff / 3600000);
+  if (hours < 1) return 'Just now';
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'Yesterday';
+  return `${days} days ago`;
+}
+
 interface StatusConfig {
   color: string;
   symbol: string;
@@ -54,6 +97,9 @@ export default function GuardianScreen() {
   const [logs, setLogs] = useState<DoseLog[]>([]);
   const [status, setStatus] = useState<StatusType>('gray');
   const [lastUpdated, setLastUpdated] = useState('—');
+  const [patientVitals, setPatientVitals] = useState<any[]>([]);
+  const [patientAppointments, setPatientAppointments] = useState<any[]>([]);
+  const [patientReports, setPatientReports] = useState<any[]>([]);
 
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const prevStatus = useRef<StatusType>('gray');
@@ -130,6 +176,36 @@ export default function GuardianScreen() {
       setMedicines(allMeds);
       setLogs(todayLogs);
       setLastUpdated(new Date().toLocaleTimeString());
+
+      const { data: vitalsData, error: vitalsError } = await supabase
+        .from('vitals')
+        .select('*')
+        .order('recorded_at', { ascending: false })
+        .limit(20);
+
+      console.log('Guardian vitals:', vitalsData, vitalsError);
+
+      // Get latest of each type
+      const latestMap: Record<string, any> = {};
+      for (const v of (vitalsData || [])) {
+        if (!latestMap[v.type]) latestMap[v.type] = v;
+      }
+      setPatientVitals(Object.values(latestMap));
+
+      const { data: apptData } = await supabase
+        .from('appointments')
+        .select('*')
+        .eq('status', 'upcoming')
+        .order('date', { ascending: true })
+        .limit(3);
+      setPatientAppointments(apptData || []);
+
+      const { data: reportsData } = await supabase
+        .from('lab_reports')
+        .select('*')
+        .order('uploaded_at', { ascending: false })
+        .limit(5);
+      setPatientReports(reportsData || []);
 
       // Calculate status
       const taken = todayLogs.filter(l => l.status === 'taken');
@@ -259,6 +335,68 @@ export default function GuardianScreen() {
           })}
         </View>
 
+        <View style={styles.vitalsSection}>
+          <Text style={styles.vitalsSectionTitle}>Latest Vitals</Text>
+          <Text style={styles.vitalsSubtitle}>Updated by your family member</Text>
+          {patientVitals.length === 0 ? (
+            <View style={styles.noVitalsCard}>
+              <Text style={styles.noVitals}>No vitals recorded yet</Text>
+              <Text style={styles.noVitalsSubtitle}>Your family member hasn't logged any vitals</Text>
+            </View>
+          ) : (
+            <View style={styles.vitalsGrid}>
+              {patientVitals.map((v: any) => {
+                const color = getVitalColor(v);
+                return (
+                  <View key={v.id} style={[styles.vitalCard, { borderLeftColor: color }]}>
+                    <Text style={styles.vitalIcon}>{getVitalIcon(v.type)}</Text>
+                    <Text style={styles.vitalLabel}>{getVitalLabel(v.type)}</Text>
+                    <Text style={[styles.vitalValue, { color }]}>{v.value} {v.unit}</Text>
+                    <Text style={styles.vitalTime}>{timeAgo(v.recorded_at)}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+        </View>
+
+        <View style={styles.apptSection}>
+          <Text style={styles.apptSectionTitle}>Upcoming Appointments</Text>
+          {patientAppointments.length === 0 ? (
+            <Text style={styles.noAppts}>No upcoming appointments</Text>
+          ) : (
+            patientAppointments.map((a: any) => (
+              <View key={a.id} style={styles.apptRow}>
+                <Text style={styles.apptIcon}>📅</Text>
+                <Text style={styles.apptText}>
+                  <Text style={styles.apptDoctor}>{a.doctor_name}</Text>
+                  {a.specialty ? ` · ${a.specialty}` : ''}
+                  {` · ${a.date}`}
+                  {a.time ? ` ${a.time}` : ''}
+                </Text>
+              </View>
+            ))
+          )}
+        </View>
+
+        <View style={styles.apptSection}>
+          <Text style={styles.apptSectionTitle}>Recent Reports</Text>
+          {patientReports.length === 0 ? (
+            <Text style={styles.noAppts}>No reports uploaded yet</Text>
+          ) : (
+            patientReports.map((r: any) => (
+              <View key={r.id} style={styles.apptRow}>
+                <Text style={styles.apptIcon}>📋</Text>
+                <Text style={styles.apptText}>
+                  <Text style={styles.apptDoctor}>{r.title}</Text>
+                  {r.report_type ? ` · ${r.report_type.replace(/_/g, ' ')}` : ''}
+                  {r.report_date ? ` · ${r.report_date}` : ''}
+                </Text>
+              </View>
+            ))
+          )}
+        </View>
+
         <Text style={styles.lastUpdated}>Last updated: {lastUpdated}</Text>
 
         <TouchableOpacity style={styles.refreshButton} onPress={() => refreshData()} activeOpacity={0.8}>
@@ -363,4 +501,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   disconnectButtonText: { color: '#9CA3AF', fontSize: 15, fontWeight: '500' },
+
+  vitalsSection: { width: '100%', marginBottom: 20 },
+  vitalsSectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#111827', marginBottom: 4 },
+  vitalsSubtitle: { fontSize: 12, color: '#9CA3AF', marginBottom: 12 },
+  noVitalsCard: { backgroundColor: '#F9FAFB', borderRadius: 12, padding: 20, alignItems: 'center' },
+  noVitals: { fontSize: 14, color: '#6B7280', marginBottom: 4 },
+  noVitalsSubtitle: { fontSize: 12, color: '#9CA3AF', textAlign: 'center' },
+  vitalsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  vitalCard: { width: '48%', backgroundColor: '#F0FDF4', borderRadius: 12, padding: 14, marginBottom: 10, borderLeftWidth: 3 },
+  vitalIcon: { fontSize: 24, marginBottom: 6 },
+  vitalLabel: { fontSize: 12, color: '#6B7280' },
+  vitalValue: { fontSize: 20, fontWeight: 'bold', marginTop: 2 },
+  vitalTime: { fontSize: 11, color: '#9CA3AF', marginTop: 4 },
+
+  apptSection: { width: '100%', marginBottom: 20 },
+  apptSectionTitle: { fontSize: 16, fontWeight: 'bold', color: '#111827', marginBottom: 12 },
+  noAppts: { fontSize: 14, color: '#9CA3AF', textAlign: 'center', paddingVertical: 8 },
+  apptRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  apptIcon: { fontSize: 14, width: 22, marginTop: 1 },
+  apptText: { flex: 1, fontSize: 14, color: '#374151' },
+  apptDoctor: { fontWeight: '700', color: '#111827' },
 });
